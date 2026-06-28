@@ -1,0 +1,22 @@
+name: Build native dumper
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Download NDK
+      run: |
+        wget -q https://dl.google.com/android/repository/android-ndk-r27-linux.zip
+        unzip -q android-ndk-r27-linux.zip
+        echo "NDK=$PWD/android-ndk-r27" >> $GITHUB_ENV
+    - name: Compile ARM64 dumper
+      run: |
+        ${{ env.NDK }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang \
+          -static -O2 -s -o oxdumper_arm64 native_dumper/oxdumper.c
+    - uses: actions/upload-artifact@v4
+      with:
+        name: oxdumper_arm64
+        path: oxdumper_arm64
