@@ -20,7 +20,7 @@
 void hack_start(const char *game_data_dir) {
     // отложенный старт - ждём пока античит успокоится
     LOGI("waiting 12 seconds before dump...");
-    sleep(120);
+    sleep(5);
     
     bool load = false;
     void *handle = nullptr;
