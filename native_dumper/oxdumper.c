@@ -99,7 +99,7 @@ static void dump_all_rwp(int pid) {
         sscanf(line, "%lx-%lx %s %s %s %*s %s", &start, &end, perms, offset, dev, path);
 
         size_t size = end - start;
-        if (size > 52428800) { // СЃРєРёРїР°РµРј > 50 MB
+        if (size > 209715200) { // СЃРєРёРїР°РµРј > 200 MB
             fprintf(stderr, "[!] skip large region 0x%lx (%zu MB)\n", start, size/1024/1024);
             continue;
         }
