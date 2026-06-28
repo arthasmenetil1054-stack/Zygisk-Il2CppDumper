@@ -1,7 +1,3 @@
-/*
- * OXIDE Memory Dumper v2 вЂ” РїРѕР»РЅС‹Р№ РґР°РјРї РїР°РјСЏС‚Рё
- * for Jack by Bin
- */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -39,7 +35,8 @@ static int find_pid(const char *pkg) {
     return -1;
 }
 
-static void dump_libil2cpp(int pid) {
+static void dump_libil2cpp(int pid, int *found) {
+    *found = 0;
     char maps_path[64];
     snprintf(maps_path, sizeof(maps_path), "/proc/%d/maps", pid);
     FILE *maps = fopen(maps_path, "r");
@@ -48,108 +45,105 @@ static void dump_libil2cpp(int pid) {
     char line[512];
     char lib_path[256] = {0};
     while (fgets(line, sizeof(line), maps)) {
-        char *path = strchr(line, '/');
-        if (!path) continue;
-        if (!strstr(path, "libil2cpp.so")) continue;
-        if (strstr(path, "arm64")) {
-            strncpy(lib_path, path, sizeof(lib_path) - 1);
-            break;
-        }
-        if (lib_path[0] == 0)
-            strncpy(lib_path, path, sizeof(lib_path) - 1);
+        char *p = strchr(line, '/');
+        if (!p) continue;
+        if (!strstr(p, "libil2cpp.so")) continue;
+        if (strstr(p, "arm64")) { strncpy(lib_path, p, sizeof(lib_path)-1); break; }
+        if (lib_path[0] == 0) strncpy(lib_path, p, sizeof(lib_path)-1);
     }
     fclose(maps);
     if (lib_path[0] == 0) return;
 
     size_t len = strlen(lib_path);
-    while (len > 0 && (lib_path[len-1] == '\n' || lib_path[len-1] == '\r'))
-        lib_path[--len] = 0;
+    while (len > 0 && (lib_path[len-1] == '\n' || lib_path[len-1] == '\r')) lib_path[--len] = 0;
     fprintf(stderr, "[+] libil2cpp: %s\n", lib_path);
 
-    char out_path[256];
-    snprintf(out_path, sizeof(out_path), "%s/libil2cpp.so", OUTPUT_DIR);
-    int src_fd = open(lib_path, O_RDONLY);
-    if (src_fd < 0) return;
-    int dst_fd = open(out_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (dst_fd < 0) { close(src_fd); return; }
+    char out[256];
+    snprintf(out, sizeof(out), "%s/libil2cpp.so", OUTPUT_DIR);
+    int src = open(lib_path, O_RDONLY);
+    if (src < 0) return;
+    int dst = open(out, O_WRONLY|O_CREAT|O_TRUNC, 0644);
+    if (dst < 0) { close(src); return; }
     char buf[65536]; ssize_t n;
-    while ((n = read(src_fd, buf, sizeof(buf))) > 0)
-        write(dst_fd, buf, n);
-    close(src_fd); close(dst_fd);
+    while ((n = read(src, buf, sizeof(buf))) > 0) write(dst, buf, n);
+    close(src); close(dst);
     fprintf(stderr, "[+] libil2cpp saved\n");
+    *found = 1;
 }
 
-static void dump_all_rwp(int pid) {
-    char maps_path[64];
-    snprintf(maps_path, sizeof(maps_path), "/proc/%d/maps", pid);
-    FILE *maps = fopen(maps_path, "r");
-    if (!maps) { fprintf(stderr, "[-] cant open %s\n", maps_path); return; }
-    
-    // отладка: выводим первые 5 строк maps
-    char dbg[512];
-    fprintf(stderr, "[*] First 5 lines of maps:\n");
-    for (int d = 0; d < 5 && fgets(dbg, sizeof(dbg), maps); d++) {
-        fprintf(stderr, "  %s", dbg);
-    }
-    rewind(maps);
+static void dump_all_rwp(int pid, int *count) {
+    *count = 0;
+    char path[64];
+    snprintf(path, sizeof(path), "/proc/%d/maps", pid);
+    FILE *maps = fopen(path, "r");
+    if (!maps) { fprintf(stderr, "[-] open maps failed\n"); return; }
 
-    char mem_path[64];
-    snprintf(mem_path, sizeof(mem_path), "/proc/%d/mem", pid);
-    int mem_fd = open(mem_path, O_RDONLY);
-    if (mem_fd < 0) { fclose(maps); return; }
+    snprintf(path, sizeof(path), "/proc/%d/mem", pid);
+    int mem = open(path, O_RDONLY);
+    if (mem < 0) { fclose(maps); fprintf(stderr, "[-] open mem failed\n"); return; }
 
     char line[512];
-    int reg_id = 0;
+    int saved = 0;
+    int rwp = 0;
     while (fgets(line, sizeof(line), maps)) {
         if (!strstr(line, "rw-p")) continue;
-        unsigned long start, end;
-        char perms[8], offset[32], dev[32], path[256] = {0};
-        sscanf(line, "%lx-%lx %s %s %s %*s %s", &start, &end, perms, offset, dev, path);
+        rwp++;
 
-        size_t size = end - start;
-        // Р±РµР· Р»РёРјРёС‚Р° - РґР°РјРїРёРј РІСЃС‘
+        unsigned long s, e;
+        char p[8]={0}, o[32]={0}, d[32]={0};
+        sscanf(line, "%lx-%lx %s %s %s", &s, &e, p, o, d);
+        size_t sz = e - s;
+        if (sz == 0) continue;
 
-        char *map = (char *)mmap(NULL, size, PROT_READ, MAP_PRIVATE, mem_fd, start);
-        if (map == MAP_FAILED) { continue; }
+        char *map = (char*)mmap(NULL, sz, PROT_READ, MAP_PRIVATE, mem, s);
+        if (map == MAP_FAILED) { fprintf(stderr, "  mmap fail 0x%lx\n", s); continue; }
 
         char out[384];
-        snprintf(out, sizeof(out), "%s/rwp_%03d_0x%lx.bin", OUTPUT_DIR, reg_id++, start);
+        snprintf(out, sizeof(out), "%s/rwp_%03d_0x%lx.bin", OUTPUT_DIR, saved, s);
         FILE *f = fopen(out, "wb");
         if (f) {
-            fwrite(map, 1, size, f);
+            size_t w = fwrite(map, 1, sz, f);
             fclose(f);
-            fprintf(stderr, "[%03d] saved 0x%lx (%zu KB)\n", reg_id-1, start, size/1024);
+            char unit = 'B';
+            double val = (double)w;
+            if (val > 1073741824) { val /= 1073741824; unit = 'G'; }
+            else if (val > 1048576) { val /= 1048576; unit = 'M'; }
+            else if (val > 1024) { val /= 1024; unit = 'K'; }
+            fprintf(stderr, "[%03d] 0x%lx (%.1f %cB)\n", saved, s, val, unit);
+            saved++;
+        } else {
+            fprintf(stderr, "  fail create %s\n", out);
         }
-        munmap(map, size);
+        munmap(map, sz);
     }
-    close(mem_fd);
+    close(mem);
     fclose(maps);
-    fprintf(stderr, "[+] Total rw-p regions: %d\n", reg_id);
+    fprintf(stderr, "[+] rw-p lines found: %d, saved: %d\n", rwp, saved);
+    *count = saved;
 }
 
-int main(int argc, char *argv[]) {
-    fprintf(stderr, "[+] OXIDE Dumper v2 by Bin\n");
+int main() {
+    fprintf(stderr, "[+] OXIDE Dumper v6 by Bin\n");
     mkdir(OUTPUT_DIR, 0755);
 
     int pid = -1;
     for (int i = 0; i < 30; i++) {
         pid = find_pid(PACKAGE_NAME);
-        if (pid > 0) { fprintf(stderr, "[+] Game PID: %d\n", pid); break; }
+        if (pid > 0) { fprintf(stderr, "[+] PID: %d (attempt %d)\n", pid, i+1); break; }
         sleep(2);
     }
-    if (pid < 0) { fprintf(stderr, "[-] Game not found\n"); return 1; }
+    if (pid < 0) { fprintf(stderr, "[-] game not running\n"); return 1; }
 
-    fprintf(stderr, "[*] Waiting 10s...\n");
     sleep(10);
 
-    dump_libil2cpp(pid);
+    int lib_ok = 0;
+    dump_libil2cpp(pid, &lib_ok);
 
-    fprintf(stderr, "[*] Waiting 5s for metadata...\n");
     sleep(5);
 
-    fprintf(stderr, "[*] Dumping all rw-p memory regions...\n");
-    dump_all_rwp(pid);
+    int rwp_count = 0;
+    dump_all_rwp(pid, &rwp_count);
 
-    fprintf(stderr, "[+] Done! Check %s\n", OUTPUT_DIR);
+    fprintf(stderr, "[+] Done! lib:%d regions:%d\n", lib_ok, rwp_count);
     return 0;
 }
