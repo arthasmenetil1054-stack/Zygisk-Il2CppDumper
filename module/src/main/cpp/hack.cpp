@@ -18,11 +18,17 @@
 #include <array>
 
 void hack_start(const char *game_data_dir) {
+    // отложенный старт - ждём пока античит успокоится
+    LOGI("waiting 12 seconds before dump...");
+    sleep(12);
+    
     bool load = false;
-    for (int i = 0; i < 10; i++) {
-        void *handle = xdl_open("libil2cpp.so", 0);
+    void *handle = nullptr;
+    for (int i = 0; i < 15; i++) {
+        handle = xdl_open("libil2cpp.so", 0);
         if (handle) {
             load = true;
+            LOGI("libil2cpp.so loaded at attempt %d", i + 1);
             il2cpp_api_init(handle);
             il2cpp_dump(game_data_dir);
             break;
@@ -33,6 +39,12 @@ void hack_start(const char *game_data_dir) {
     if (!load) {
         LOGI("libil2cpp.so not found in thread %d", gettid());
     }
+    if (handle) {
+        // закрываем libil2cpp чтобы не светить следы
+        xdl_close(handle);
+        LOGI("libil2cpp.so closed, cleaning up");
+    }
+    LOGI("hack thread done");
 }
 
 std::string GetLibDir(JavaVM *vms) {
