@@ -83,7 +83,15 @@ static void dump_all_rwp(int pid) {
     char maps_path[64];
     snprintf(maps_path, sizeof(maps_path), "/proc/%d/maps", pid);
     FILE *maps = fopen(maps_path, "r");
-    if (!maps) { fprintf(stderr, "[-] cant open maps\n"); return; }
+    if (!maps) { fprintf(stderr, "[-] cant open %s\n", maps_path); return; }
+    
+    // отладка: выводим первые 5 строк maps
+    char dbg[512];
+    fprintf(stderr, "[*] First 5 lines of maps:\n");
+    for (int d = 0; d < 5 && fgets(dbg, sizeof(dbg), maps); d++) {
+        fprintf(stderr, "  %s", dbg);
+    }
+    rewind(maps);
 
     char mem_path[64];
     snprintf(mem_path, sizeof(mem_path), "/proc/%d/mem", pid);
